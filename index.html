@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<!-- (c)taisukef CC BY  http://fukuno.jig.jp/ -->
+<html>
+<head>
+<meta charset='utf-8'/>
+<title>drawlikepcb</title>
+<meta property="og:image" content="http://fukuno.jig.jp/app/drawlikepcb/ss.png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, target-densitydpi=medium-dpi">
+<meta name="format-detection" content="telephone=no">
+<script src="lib/fukuno.js"></script>
+<script>"use strict";
+
+window.onload = function() {
+	testCanvas();
+};
+
+var testCanvas = function() {
+	var c = get("canvas");
+	var g = getContext(c);
+	
+	// util
+	var containsRect = function(x, y, rx, ry, rw, rh) {
+		return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
+	};
+	var containsCircle = function(x, y, px, py, r) {
+		var dx = x - px;
+		var dy = y - py;
+		return dx * dx + dy * dy < r * r;
+	};
+	
+	var lines = [];
+	
+	var Line = function(x1, y1, x2, y2) {
+		this.x1 = x1;
+		this.y1 = y1;
+		this.x2 = x2;
+		this.y2 = y2;
+		this.w = 5;
+		this.editflg = 0;
+		this.draw = function(g) {
+			if (this.x1 == this.x2 && this.y1 == this.y2) {
+				g.beginPath();
+//				g.lineWidth = 1;
+//				g.lineCap = "butt";
+				g.arc(this.x1, this.y1, this.w / 2, 0, Math.PI * 2, false);
+				g.closePath();
+//				g.fill();
+				g.stroke();
+			} else {
+	//			g.drawLine(l.x1, l.y1, l.x2, l.y2);
+				g.beginPath();
+//				g.lineWidth = this.w;
+//				g.lineCap = "round";
+				var th = Math.PI / 2 + Math.atan2(this.y2 - this.y1, this.x2 - this.x1);
+				var w = this.w / 2;
+				var dx = Math.cos(th) * w;
+				var dy = Math.sin(th) * w;
+				g.moveTo(this.x1 - dx, this.y1 - dy);
+				g.lineTo(this.x2 - dx, this.y2 - dy);
+				g.arc(this.x2, this.y2, w, th - Math.PI, th, false);
+				g.lineTo(this.x2 + dx, this.y2 + dy);
+				g.arc(this.x1, this.y1, w, th, th + Math.PI, false);
+//				g.lineTo(this.x1 + dx, this.y1 + dy);
+				g.closePath();
+				g.stroke();
+			}
+		};
+		this.containsPoint = function(x, y) {
+			return x == this.x1 && y == this.y1 || x == this.x2 && y == this.y2;
+		};
+		this.nearsPoint = function(x, y) {
+			return containsCircle(x, y, this.x1, this.y1, this.w / 2) || containsCircle(x, y, this.x2, this.y2, this.w / 2);
+		};
+		this.nears = function(x, y) {
+			if (this.nearsPoint(x, y))
+				return true;
+			if (this.x1 == this.x2) {
+				if (Math.abs(x - this.x1) > this.w / 2)
+					return false;
+				if (this.y1 < this.y2) {
+					return y >= this.y1 && y <= this.y2;
+				}
+				return y >= this.y2 && y <= this.y1;
+			}
+			if (this.x1 < this.x2) {
+				if (x < this.x1 || x > this.x2)
+					return false;
+			} else {
+				if (x > this.x1 || x < this.x2)
+					return false;
+			}
+			var a = (this.y2 - this.y1) / (this.x2 - this.x1);
+			var y0 = this.y1 - a * this.x1;
+			var yy = a * x + y0;
+			return Math.abs(yy - y) <= this.w / 2;
+		};
+		this.startEdit = function(x, y) {
+			this.editflg = x == this.x1 && y == this.y1 ? 1 : 0;
+			this.editflg |= x == this.x2 && y == this.y2 ? 2 : 0;
+		};
+		this.edit = function(x, y) {
+			if (this.editflg & 1) {
+				this.x1 = x;
+				this.y1 = y;
+			}
+			if (this.editflg & 2) {
+				this.x2 = x;
+				this.y2 = y;
+			}
+		};
+		this.endEdit = function() {
+			this.editflg = 0;
+		};
+		this.toString = function() {
+			return this.x1 + "," + this.y1 + "," + this.x2 + "," + this.y2;
+		};
+	};
+	
+	var cline = null;
+
+	var sw = 610;
+	var sh = 400;
+	var ox = 10;
+	var oy = 50;
+	
+	var fh = 12;
+	var grid = 20;
+	
+	var snapGrid = function(x, y) {
+		x = Math.floor((x - ox + grid / 2) / grid) * grid;
+		y = Math.floor((y - oy + grid / 2) / grid) * grid;// + grid / 2;
+		return { x: x, y: y };
+	};
+	
+	var selp = null;
+	
+	// menu
+	var nmenu = 0;
+	var Menu = function(s, idx, pos, func) {
+		this.s = s;
+		this.idx = idx;
+		this.pos = pos;
+		this.func = func;
+		this.draw = function() {
+			if (nmenu == this.idx) {
+				g.setColor(200, 100, 100);
+			} else {
+				g.setColor(200, 200, 200);
+			}
+			g.fillRect(ox + this.pos * 60, 10, 50, fh * 2);
+			g.setColor(0, 0, 0);
+			g.fillText(s, ox + 10 + this.pos * 60, 10 + fh + fh / 2);
+		};
+		this.contains = function(x, y) {
+			return containsRect(x, y, ox + this.pos * 60, 10, 50, fh * 2);
+		};
+	};
+	var save = function() {
+		var s = "*drawlinkepcb\n";
+		for (var i = 0; i < lines.length; i++) {
+			var l = lines[i];
+			s += l.x1 + "," + l.y1 + "," + l.x2 + "," + l.y2 + "\n";
+		}
+		s = s.substring(0, s.length - 1);
+		get("ta").value = s;
+	};
+	var load = function() {
+		var s = get("ta").value;
+		var ss = s.split("\n");
+		lines = [];
+		for (var i = 0; i < ss.length; i++) {
+			var p = ss[i].split(",");
+			if (p.length == 4) {
+				for (var j = 0; j < p.length; j++)
+					p[j] = parseInt(p[j]);
+				lines.push(new Line(p[0], p[1], p[2], p[3]));
+			}
+		}
+		g.draw();
+	};
+	var menu = [
+		[ "draw", 0 ],
+		[ "edit", 1 ],
+		[ "delete", 2 ],
+		[ "save", -1, function() { save() } ],
+		[ "load", -1, function() { load() } ],
+	];
+	var menus = [];
+	for (var i = 0; i < menu.length; i++)
+		menus.push(new Menu(menu[i][0], menu[i][1], i, menu[i][2]));
+	
+	g.draw = function() {
+		g.setColor(255, 255, 255);
+		g.fillRect(0, 0, g.cw, g.ch);
+		g.setColor(0, 0, 0);
+		g.lineWidth = 1;
+		for (var i = 0; i < sw; i += grid) {
+			for (var j = 0; j < sh; j += grid) {
+				g.drawLine(ox + i, oy + j, ox + i + 1, oy + j);
+			}
+		}
+		for (var i = 0; i < menus.length; i++)
+			menus[i].draw(g);
+//		g.fillText("max", 0, fh);
+		
+		g.setColor(200, 50, 50);
+		g.save();
+		g.translate(ox, oy);
+		if (cline) {
+			cline.draw(g);
+		}
+		for (var i = 0; i < lines.length; i++) {
+			var l = lines[i];
+			l.draw(g);
+		}
+		g.restore();
+	};
+	setUI(c);
+	c.onuidown = function(x, y) {
+		for (var i = 0; i < menus.length; i++) {
+			if (menus[i].contains(x, y)) {
+				var idx = menus[i].idx;
+				if (idx >= 0) {
+					nmenu = idx;
+					g.draw();
+				} else {
+					menus[i].func();
+				}
+				return;
+			}
+		}
+		
+		var p = snapGrid(x, y);
+		if (nmenu == 0) {
+			if (p.x >= 0 && p.y >= 0) {
+				cline = new Line(p.x, p.y, p.x, p.y);
+				g.draw();
+			}
+		} else if (nmenu == 1) {
+			for (var i = 0; i < lines.length; i++) {
+				lines[i].startEdit(p.x, p.y);
+			}
+		} else if (nmenu == 2) {
+			for (var i = 0; i < lines.length; i++) {
+				if (lines[i].nears(x - ox, y - oy)) {
+					lines.splice(i, 1);
+					i--;
+				}
+			}
+			g.draw();
+		}
+	};
+	c.onuimove = function(x, y) {
+		var p = snapGrid(x, y);
+		if (nmenu == 0) {
+			if (cline) {
+				cline.x2 = p.x;
+				cline.y2 = p.y;
+				g.draw();
+			}
+		} else if (nmenu == 1) {
+			for (var i = 0; i < lines.length; i++) {
+				lines[i].edit(p.x, p.y);
+			}
+			g.draw();
+		}
+		/*
+		if (selp) {
+			for (var i = 0; i < lines.length; i++) {
+				if (lines[i].containsPoint(selp.x, selp.y)) {
+					lines[selp = p;
+					break;
+				}
+			}
+		}
+		*/
+	};
+	c.onuiup = function(x, y) {
+		if (nmenu == 0) {
+			if (cline) {
+				var p = snapGrid(x, y);
+				cline.x2 = p.x;
+				cline.y2 = p.y;
+				lines.push(cline);
+				cline = null;
+				g.draw();
+			}
+		} else if (nmenu == 1) {
+			for (var i = 0; i < lines.length; i++) {
+				lines[i].endEdit();
+			}
+		}
+	};
+	g.init();
+};
+</script>
+<style>
+body {
+	margin: 8px;
+	box-sizing: border-box; /* width include border */
+	-webkit-text-size-adjust: none; /* for iPhone */
+}
+h1 {
+	margin: .2em 0em;
+	font-size: 140%;
+}
+#canvas {
+	display: block;
+	width: 610px;
+	height: 400px;
+}
+#ta {
+	display: block;
+	width: 610px;
+	height: 120px;
+}
+a {
+	color: gray !important;
+}
+#credit {
+	font-size: 90%;
+	margin: 10px 0px;
+}
+@media screen and (min-width: 440px) {
+}
+</style>
+</head>
+<body>
+
+<h1>drawlikepcb</h1>
+<canvas id="canvas"></canvas><br>
+<textarea id="ta"></textarea>
+
+<div id='credit'>
+APP: <a href='http://fukuno.jig.jp/drawlikepcb'>CC BY fukuno.jig.jp</a>
+</div>
+
+</body>
+</html>
